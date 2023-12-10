@@ -1,4 +1,4 @@
-package main
+package util
 
 import (
 	"encoding/json"
@@ -12,8 +12,10 @@ import (
 
 	"github.com/allegro/bigcache/v3"
 	"github.com/caffix/cloudflare-roundtripper/cfrt"
+	"github.com/sirupsen/logrus"
 )
 
+var logger = logrus.New()
 var cache *bigcache.BigCache
 
 func setCache(key string, entry interface{}) error {
@@ -94,7 +96,7 @@ var client = &http.Client{
 	},
 }
 
-func sendRequest(u string) (*http.Response, error) {
+func SendRequest(u string) (*http.Response, error) {
 	url, err := url.Parse(u)
 	if err != nil {
 		return nil, err
@@ -104,7 +106,6 @@ func sendRequest(u string) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-
 
 	req := &http.Request{
 		Method: http.MethodGet,

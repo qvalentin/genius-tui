@@ -1,4 +1,4 @@
-package main
+package genius
 
 import (
 	"encoding/json"
@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"strings"
 
+	"jaytaylor.com/html2text"
+
 	"github.com/PuerkitoBio/goquery"
-	"github.com/gorilla/mux"
+	"github.com/rramiachraf/dumb/util"
 )
 
-type song struct {
+type Song struct {
 	Artist  string
 	Title   string
 	Image   string
@@ -40,7 +42,7 @@ type customPerformance struct {
 	}
 }
 
-func (s *song) parseLyrics(doc *goquery.Document) {
+func (s *Song) parseLyrics(doc *goquery.Document) {
 	doc.Find("[data-lyrics-container='true']").Each(func(i int, ss *goquery.Selection) {
 		h, err := ss.Html()
 		if err != nil {
@@ -48,15 +50,26 @@ func (s *song) parseLyrics(doc *goquery.Document) {
 		}
 		s.Lyrics += h
 	})
+
+	plain, err := html2text.FromString(s.Lyrics, html2text.Options{
+		PrettyTables: true,
+		OmitLinks:    true,
+		TextOnly:     false,
+	})
+	if err != nil {
+		panic(err)
+	}
+	s.Lyrics = plain
+
 }
 
-func (s *song) parseSongData(doc *goquery.Document) {
+func (s *Song) parseSongData(doc *goquery.Document) {
 	attr, exists := doc.Find("meta[property='twitter:app:url:iphone']").Attr("content")
 	if exists {
 		songID := strings.Replace(attr, "genius://songs/", "", 1)
 		u := fmt.Sprintf("https://genius.com/api/songs/%s?text_format=plain", songID)
 
-		res, err := sendRequest(u)
+		res, err := util.SendRequest(u)
 		if err != nil {
 			logger.Errorln(err)
 		}
@@ -98,66 +111,40 @@ func truncateText(text string) string {
 	return text
 }
 
-func (s *song) parse(doc *goquery.Document) {
+func (s *Song) parse(doc *goquery.Document) {
 	s.parseLyrics(doc)
 	s.parseSongData(doc)
 }
 
-func lyricsHandler(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
+func Lyrics(id string) (Song, error) {
 
-	if data, err := getCache(id); err == nil {
-		render("lyrics", w, data)
-		return
-	}
-
-	url := fmt.Sprintf("https://genius.com/%s-lyrics", id)
-	resp, err := sendRequest(url)
+	url := fmt.Sprintf("https://genius.com%s", id)
+	resp, err := util.SendRequest(url)
 	if err != nil {
 		logger.Errorln(err)
-		w.WriteHeader(http.StatusInternalServerError)
-		render("error", w, map[string]string{
-			"Status": "500",
-			"Error":  "cannot reach genius servers",
-		})
-		return
+		return Song{}, err
 	}
 
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		w.WriteHeader(http.StatusNotFound)
-		render("error", w, map[string]string{
-			"Status": "404",
-			"Error":  "page not found",
-		})
-		return
+		return Song{}, fmt.Errorf("Not found")
 	}
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
 		logger.Errorln(err)
-		w.WriteHeader(http.StatusInternalServerError)
-		render("error", w, map[string]string{
-			"Status": "500",
-			"Error":  "something went wrong",
-		})
-		return
+		return Song{}, err
 	}
 
 	cf := doc.Find(".cloudflare_content").Length()
 	if cf > 0 {
 		logger.Errorln("cloudflare got in the way")
-		render("error", w, map[string]string{
-			"Status": "500",
-			"Error":  "damn cloudflare, issue #21 on GitHub",
-		})
-		return
+		return Song{}, err
 	}
 
-	var s song
+	var s Song
 	s.parse(doc)
 
-	render("lyrics", w, s)
-	setCache(id, s)
+	return s, nil
 }
